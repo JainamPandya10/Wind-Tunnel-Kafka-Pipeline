@@ -1,0 +1,118 @@
+services:
+
+  # ---------- Message broker ----------
+  # Using the official Apache Kafka image (not a third-party one) --
+  # Bitnami changed their Docker Hub retention policy and removed most
+  # older version tags, which is why bitnami/kafka:3.7 stopped resolving.
+  kafka:
+    image: apache/kafka:latest
+    container_name: wt_kafka
+    ports:
+      - "9094:9094"   # exposed to the host, for debugging/inspection from outside Docker
+    environment:
+      # KRaft mode: Kafka runs without Zookeeper (simpler for local dev).
+      # This single container acts as both broker and controller.
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      # PLAINTEXT (9092) is used by the other containers on the Docker network (hostname 'kafka').
+      # EXTERNAL (9094) is for connecting from your host machine, e.g. for local debugging.
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - CLUSTER_ID=4L6g3nShT-eMCtK--X86sw
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # ---------- Storage ----------
+  postgres:
+    image: postgres:16
+    container_name: wt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wt_user
+      POSTGRES_PASSWORD: wt_password
+      POSTGRES_DB: wind_tunnel
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wt_user -d wind_tunnel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Producer: simulates the wind tunnel's sensors ----------
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: wt_producer
+    command: python -m producer.main
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - READINGS_PER_SECOND=5
+      - ANOMALY_PROBABILITY=0.05
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ---------- Consumer 1: persists every reading to Postgres ----------
+  storage-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: wt_storage_consumer
+    command: python -m consumers.storage.main
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://wt_user:wt_password@postgres:5432/wind_tunnel
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ---------- Consumer 2: flags anomalous readings, publishes alerts ----------
+  anomaly-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: wt_anomaly_consumer
+    command: python -m consumers.anomaly.main
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ---------- Consumer 3: "delivers" alerts (console + Postgres log) ----------
+  alert-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: wt_alert_consumer
+    command: python -m consumers.alerting.main
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://wt_user:wt_password@postgres:5432/wind_tunnel
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
