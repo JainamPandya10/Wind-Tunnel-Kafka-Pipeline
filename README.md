@@ -8,8 +8,7 @@ event-driven microservice system is structured.
 
 ## Why this project
 
-This mirrors the exact pattern a "working student, event-driven
-architecture, Kafka/RabbitMQ, microservices" job posting describes:
+This project describes:
 
 - **One producer, multiple independent consumers on the same stream.**
   The storage consumer and the anomaly consumer both read every message
