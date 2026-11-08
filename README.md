@@ -150,21 +150,6 @@ A reading that gets flagged is **not** added to the rolling window, so a
 single spike doesn't drag the baseline toward itself and mask the next
 real anomaly.
 
-## What this demonstrates (for CV / interview prep)
-
-- Event-driven architecture: independent microservices connected only by
-  Kafka topics, each in its own consumer group
-- A two-hop pipeline (readings topic → derived alerts topic), not just a
-  single producer/consumer pair
-- Docker Compose orchestration of a multi-service system with health
-  checks and startup dependencies
-- Postgres schema design for time-series-ish data (indexes on
-  `sensor_type + recorded_at` for the query patterns that actually matter)
-- Testable architecture: I/O isolated from logic, 20 unit tests covering
-  simulation, detection, serialization, and persistence — all runnable
-  without any live infrastructure
-- Defensive engineering: Kafka connection retries on startup to handle the
-  container-startup race condition, graceful shutdown on `KeyboardInterrupt`
 
 ## Extending this project
 
